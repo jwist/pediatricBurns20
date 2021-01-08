@@ -1,0 +1,247 @@
+---
+title: "pediatric burns 2020"
+author: "Jul"
+date: "07/01/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(platetools)
+library(ggplot2)
+library(viridis)
+library(hastaLaVista)
+library(fusion)
+library(request)
+```
+
+```{r}
+projectName <- "pediatricBurns"
+cohortName <- "2020"
+prefix <- "PBU"
+
+origin <- readxl::read_xlsx("originalFiles/Pediatric_burns_deidentified_datav2_sampleinventory_010121.xlsx", sheet = "Run order")
+originalID <- origin$tubeID
+receptionDate <- "00012021"
+originalPlateName <- NA
+originalPlateType <- NA
+originalTubeRow <- NA
+originalTubeCol <- NA
+TubeType <- NA
+MatrixType <- "PLA"
+Volume <- NA
+comment <- NA
+
+plateLength <- 80
+```
+
+```{r read original files}
+nr <- nrow(origin)
+np <- ceiling(nr / plateLength)
+
+sampleID <- paste0(prefix, substr(as.character(100000 + seq_along(1:nr)), 2,6))
+
+plateID <- paste0(prefix, "p", 
+                  substr(as.character(100 + seq_along(1:np)), 2,3))
+
+# we check names for originalID
+originalID <- c("ddd.aaa", "dd_aa", "dad*", "ddd uuu", "ddd+aaa", "ddd*yyy")
+originalID <- tolower(originalID)
+originalID <-gsub("[*]$", "-S", originalID)
+originalID <-gsub("[*]", "T", originalID)
+originalID <-gsub("[+]", "P", originalID)
+originalID <-gsub("[^A-Za-z0-9]", "-", originalID)
+
+sampleDescriptionList <- data.frame(sampleID = sampleID,
+                       plateID = plateID,
+                       cohortName = rep(cohortName, nr),
+                       receptionDate = rep(receptionDate, nr),
+                       originalID = origin$tubeID,
+                       originalPlate = rep(originalPlate , nr),
+                       originalPlateType = rep(originalPlateType , nr),
+                       originalTubePosition = rep(originalTubePosition, nr),
+                       originalTubeType = rep(originalTubeType, nr),
+                       sampleMatrixType = rep(sampleMatrixType, nr),
+                       sampleVolume = rep(sampleVolume, nr),
+                       comment = rep(comment, nr))
+
+#manifest <- new("dataElement", 
+                # obsDescr = sampleDescriptionList,
+                # type = "ANN")
+
+# save(manifest, file = "datasets/manifest.daE")
+
+#ann <- readxl::read_xlsx("originalFiles/DB_COVID_samples_20201118_CICbioGUNE.xlsx", 
+                         #sheet = "Hoja2")
+#sampleAnnotations <- lookup(manifest, ann, using = c("sourceID", "sample_id"))
+
+# save(sampleAnnotations, file = "datasets/sampleAnnotations.daE")
+
+# write.table(sampleAnnotations@obsDescr,
+#               file = "sampleAnnotations.tsv",
+#               sep = "\t",
+#               dec = ".",
+#               row.names = FALSE)
+
+```
+
+```{r}
+positions <- request::getPlatePos(by = "col")[1:nr,]
+sampleDescriptionList$row <- positions$row
+sampleDescriptionList$col <- positions$col
+```
+
+```{r check plate distribution}
+plate <- "PBUp01"
+F <- selectedSamples$plateID == plate
+raw_map(data = as.factor(selectedSamples$plateID[F]),
+        well = paste0(LETTERS[selectedSamples$row[F]], selectedSamples$col[F])) + ggtitle(plate)
+```
+
+## NMR 1D and DIRE
+```{r nmr config, echo = FALSE}
+plateList <- c("PBUp01")
+LTR <- 4
+machineName <- "IVDR04"
+methodName <- "NMR-PLA-3MM"
+matrixName <- "PLA"
+
+for (plate in plateList) {
+  runName <- paste(projectName, 
+                    cohortName, 
+                    machineName, 
+                    methodName,
+                    matrixName,
+                    plate, 
+                    format(Sys.time(), "%d%m%y"),
+                    sep = "_")
+  matrixID <- 1
+  deviceID <- 4
+  methodID <- 23
+  
+  selectedPlateF <- selectedSamples$plateID == plate
+  
+  plateNames <- selectedSamples$plateName
+  sampleID <- selectedSamples$sampleID[selectedPlateF]
+  sourceID <- selectedSamples$originalID[selectedPlateF]
+ 
+  columns <- selectedSamples$col[selectedPlateF]
+  rows <- selectedSamples$row[selectedPlateF]
+  plateLength <- length(rows)
+
+  plate1S <- data.frame("_sampleID" = paste0(sampleID, "_", sourceID),
+                       "_matrixID" = rep(matrixID, plateLength),
+                       "_runName" = rep(runName, plateLength),
+                       "_sampleType" = rep("S", plateLength),
+                       "_methodID" = rep(methodID, plateLength),
+                       "_deviceID" = rep(deviceID, plateLength),
+                       "_projectName" = rep(projectName, plateLength),
+                       "_platePosition" = rep(1, plateLength),
+                       "row" = rows,
+                       "column" = columns, check.names = FALSE)
+  
+  plate1LTR <- data.frame("_sampleID" = rep("LTR_PLASMA", LTR),
+                         "_matrixID" = rep(matrixID, LTR),
+                         "_runName" = rep(runName, LTR),
+                         "_sampleType" = rep("LTR", LTR),
+                         "_methodID" = rep(methodID, LTR),
+                         "_deviceID" = rep(deviceID, LTR),
+                         "_projectName" = rep(projectName, LTR),
+                         "_platePosition" = rep(1, LTR),
+                         "row" = seq(2,8, by = 2)[1:LTR], #rep(c(1:8), each = 1),
+                         "column" = rep(c(12), LTR), check.names = FALSE)
+  
+  plate1 <- rbind(plate1S, plate1LTR)
+  # ordering plate by row
+  F <- sort(plate1$col, index.return = TRUE)$ix
+  plate1 <- plate1[F,]
+  F <- sort(plate1$row, index.return = TRUE)$ix
+  plate1 <- plate1[F,]
+  write.table(plate1, file = paste0("configurationFiles/", plate, "_128request.tsv"), sep = "\t", dec = ".", row.names = FALSE)
+}
+
+```
+
+
+```{r print layour}
+selectedSamples <- sampleDescriptionList
+ss <- selectedSamples[selectedSamples$plateID == "PBUp01",]
+vec <- c(paste0(ss$sampleID, "_", ss$originalID), rep(NA, 80 - nrow(ss)))
+mat <- matrix(vec, 8, 10)
+rownames(mat) <- LETTERS[1:8]
+colnames(mat) <- c(1:10)
+#write.table(mat, file = "configurationFiles/COVp21_layout.csv", sep = ",")
+```
+
+
+```{r, results='asis', warning=FALSE}
+library(htmlTable)
+library(magrittr)
+cat("<p style=\"page-break-before: always\">")
+
+for (plate in 1:length(plateList)) {
+ss <- selectedSamples[selectedSamples$plateName == plateList[plate],]
+F <- sort(as.numeric(ss$row), index.return = TRUE)$ix
+ss <- ss[F,]
+F <- sort(ss$col, index.return = TRUE)$ix
+ss <- ss[F,]
+vec <- c(paste0( "", ss$bloodno, "",
+                "<br>", "<b>", ss$newBoxNo, "</b> ",
+                ss$position), "<br>",
+                rep(NA, 80 - nrow(ss)))
+
+mat <- matrix(vec, 8, 10)
+rownames(mat) <- LETTERS[1:8]
+colnames(mat) <- c(1:10)
+print(mat %>%
+        addHtmlTableStyle(col.rgroup = c("none", "#CBD3F2"), col.columns = c("none", "#D17DF2")) %>%
+        htmlTable(cgroup = c(paste0("", plateList[plate], "")),
+          n.cgroup = c(10)))
+
+if (plate %% 2 == 0) {
+  cat("<p style=\"page-break-before: always\">")
+}
+# vec <- c(paste0(ss$bloodno,
+#                 "\n", "BOX: ", ss$newBoxNo,
+#                 "\n", ss$position),
+#          rep(NA, 80 - nrow(ss)))
+# 
+# mat <- matrix(vec, 8, 10)
+# rownames(mat) <- LETTERS[1:8]
+# colnames(mat) <- c(1:10)
+# mat <- data.frame(row = LETTERS[1:8], mat, check.names = FALSE)
+# write.table(mat, file = paste0("configurationFiles/", plate, "_layout.csv"),
+#             sep = ",",
+#             row.names = FALSE)
+}
+```
+
+
+```{r, results = 'asis'}
+library(magrittr)
+library(htmlTable)
+cat("<p style=\"page-break-before: always\">")
+
+boxList <- levels(factor(selectedSamples$newBoxNo))
+for (box in boxList) {
+  fi <- selectedSamples$newBoxNo == box
+  mat <- data.frame(oldPosition = selectedSamples$originalTubePosition[fi],
+                    originalID = selectedSamples$originalID[fi],
+                    plateID = selectedSamples$plateID[fi],
+                    position = selectedSamples$position[fi],
+                    numPos = request::posToNum(selectedSamples$position[fi]))
+  if (nrow(mat) %% 2 != 0) {
+    mat <- rbind(mat, rep(NA, 5))
+  }
+  l <- nrow(mat)
+  newMat <- cbind(mat[1:(l %/% 2),], 
+                  " " = rep("  ", l %/% 2),
+                  mat[(l %/% 2 + 1):l,])
+  print(newMat %>%
+        addHtmlTableStyle(col.rgroup = c("none", "#CBD3F2")) %>%
+        htmlTable(cgroup = c(paste0("<h2>", box, "</h2>")),
+          n.cgroup = c(11)))
+  cat("<p style=\"page-break-before: always\">")
+}
+```
